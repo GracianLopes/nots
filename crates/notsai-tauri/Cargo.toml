@@ -1,0 +1,31 @@
+[package]
+name = "notsai-tauri"
+description = "notsAI Tauri 2 application backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+notsai-core = { path = "../notsai-core" }
+notsai-storage = { path = "../notsai-storage" }
+notsai-audio = { path = "../notsai-audio" }
+notsai-transcribe = { path = "../notsai-transcribe" }
+notsai-ai = { path = "../notsai-ai" }
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-opener = "2"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+
+[lib]
+name = "notsai_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]

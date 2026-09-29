@@ -1,0 +1,21 @@
+{
+  "name": "notsai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "notsAI - AI meeting assistant that understands meetings, not merely transcribes them",
+  "packageManager": "pnpm@10.11.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  },
+  "scripts": {
+    "dev": "pnpm --filter @notsai/desktop dev",
+    "build": "pnpm --filter @notsai/desktop build",
+    "tauri": "pnpm --filter @notsai/desktop tauri",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test"
+  }
+}

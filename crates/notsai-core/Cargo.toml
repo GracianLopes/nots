@@ -1,0 +1,17 @@
+[package]
+name = "notsai-core"
+description = "notsAI shared domain models, events, settings and service traits"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+async-trait.workspace = true
+tokio.workspace = true

@@ -1,0 +1,44 @@
+# Rust
+/target
+**/*.rs.bk
+cargo.lock.orig
+# Cargo.lock is committed but generated; keep pattern in case of accidental local tooling
+# Actually: for workspace apps, commit Cargo.lock. We keep the default and rely on git add.
+
+# Node / JS
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+apps/desktop/src-tauri/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data (records, transcripts, models, db)
+*.m4a
+*.wav
+*.mp3
+*.ogg
+*.flac
+*_db.sqlite3
+/data/
+/models/
+*.whisper.bin
+
+# Logs
+*.log
+logs/

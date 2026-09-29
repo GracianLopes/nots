@@ -1,0 +1,21 @@
+[package]
+name = "notsai-audio"
+description = "notsAI microphone capture (cpal) and audio encoding (ffmpeg)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+notsai-core = { path = "../notsai-core" }
+serde.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["process", "fs", "io-util", "sync", "time", "rt"] }
+tracing.workspace = true
+anyhow.workspace = true
+cpal.workspace = true
+hound.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true

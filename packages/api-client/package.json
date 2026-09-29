@@ -1,0 +1,17 @@
+{
+  "name": "@notsai/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "notsAI typed frontend client for the Tauri IPC surface",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@notsai/shared-types": "workspace:*",
+    "@tauri-apps/api": "^2"
+  }
+}

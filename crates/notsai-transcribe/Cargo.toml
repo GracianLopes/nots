@@ -1,0 +1,20 @@
+[package]
+name = "notsai-transcribe"
+description = "notsAI local speech-to-text via whisper.cpp (whisper-rs)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+notsai-core = { path = "../notsai-core" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+whisper-rs.workspace = true
