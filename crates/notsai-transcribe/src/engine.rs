@@ -137,6 +137,7 @@ fn decode_pass(
     chunk_total_secs: f64,
     total_secs: f64,
     language: Option<String>,
+    suppress_nst: bool,
     last_published: Arc<Mutex<f64>>,
 ) -> Result<PassSegments, CoreError> {
     let mut params = FullParams::new(SamplingStrategy::BeamSearch {
@@ -150,6 +151,7 @@ fn decode_pass(
     params.set_n_threads(threads as i32);
     params.set_suppress_blank(true);
     params.set_language(language.as_deref());
+    params.set_suppress_nst(suppress_nst);
     params.set_progress_callback_safe(move |percent: i32| {
         let percent = percent.clamp(0, 100);
         let position_secs = chunk_start_secs + (percent as f64 / 100.0) * chunk_total_secs;
@@ -243,6 +245,7 @@ fn choose_auto_pass(
             chunk_total_secs,
             total_secs,
             Some(code),
+            false,
             last_published.clone(),
         )?;
         if pass_is_usable(&pass) {
@@ -265,6 +268,7 @@ fn choose_auto_pass(
             chunk_total_secs,
             total_secs,
             None,
+            false,
             last_published,
         ),
     }
@@ -296,6 +300,10 @@ impl WhisperEngine {
             .unwrap_or(4)
             .clamp(1, 4);
         whisper_rs::install_logging_hooks();
+        let model = match (language, model) {
+            (SttLanguage::En, WhisperModel::Small) => WhisperModel::SmallEn,
+            _ => model,
+        };
         Self {
             model,
             language,
@@ -455,10 +463,7 @@ fn run_whisper(
 
                 let auto_lang = dominant_lang_id.and_then(get_lang_str).map(str::to_string);
 
-                let forced_code = match language {
-                    SttLanguage::En => None,
-                    other => Some(language_code(other).to_string()),
-                };
+                let forced_code = Some(language_code(language).to_string());
                 let primary_lang = forced_code.clone().or_else(|| auto_lang.clone());
 
                 let first = decode_pass(
@@ -471,6 +476,7 @@ fn run_whisper(
                     chunk_total_secs,
                     total_secs,
                     primary_lang,
+                    matches!(language, SttLanguage::En),
                     last_published.clone(),
                 )?;
 
@@ -494,6 +500,7 @@ fn run_whisper(
                         chunk_total_secs,
                         total_secs,
                         Some(code),
+                        false,
                         last_published.clone(),
                     )?;
                     Ok(Some(extra))
@@ -1027,6 +1034,7 @@ mod tests {
                     chunk_total_secs,
                     total_secs,
                     lang.clone(),
+                    false,
                     last_published.clone(),
                 )
                 .expect("decode_pass");
@@ -1123,6 +1131,98 @@ mod tests {
         println!(
             "bench_run_whisper: lang={lang:?} threads={threads} audio={audio_secs:.1}s elapsed={elapsed:?} segments={} chars={chars}",
             result.segments.len(),
+        );
+        for seg in &result.segments {
+            println!(
+                "bench segment {:>2}: [{:>7.2}s -> {:>7.2}s] {}",
+                seg.seq, seg.start, seg.end, seg.text
+            );
+        }
+    }
+
+    /// Drives the real [`WhisperEngine::new`] route — including the
+    /// En+Small → SmallEn model mapping and the first-run ~487 MB download
+    /// through the manager's consent gate — then transcribes via the public
+    /// [`TranscriptionEngine::transcribe`] method.
+    ///
+    /// Usage:
+    ///   NOTSAI_ENGINE_TEST=1 \
+    ///     cargo test -p notsai-transcribe engine_transcribe_end_to_end -- --nocapture
+    ///
+    /// Env overrides: `NOTSAI_ENGINE_TEST` (must be `1` to run), `NOTSAI_AUDIO`
+    /// (audio file to transcribe, default `/tmp/en_bench.wav`); model dir
+    /// resolution uses `NOTSAI_MODELS_DIR` via [`models_dir`]. Gated so plain
+    /// `cargo test` never triggers the model download.
+    #[tokio::test]
+    async fn engine_transcribe_end_to_end() {
+        if std::env::var("NOTSAI_ENGINE_TEST").as_deref() != Ok("1") {
+            eprintln!("skipping engine_transcribe_end_to_end: NOTSAI_ENGINE_TEST != 1");
+            return;
+        }
+
+        let Some(models_dir) = models_dir() else {
+            eprintln!("skipping: could not determine models dir");
+            return;
+        };
+        let audio_path = std::path::PathBuf::from(
+            std::env::var_os("NOTSAI_AUDIO").unwrap_or_else(|| "/tmp/en_bench.wav".into()),
+        );
+
+        let manager = ModelManager::new(models_dir);
+        let engine = WhisperEngine::new(
+            WhisperModel::Small,
+            SttLanguage::En,
+            manager,
+            Consent::Granted,
+        );
+
+        let meeting_id = Uuid::new_v4();
+        let bus = EventBus::new(256);
+        let mut rx = bus.subscribe();
+        let result = engine
+            .transcribe(
+                meeting_id,
+                AudioSource::File {
+                    path: audio_path,
+                },
+                &bus,
+            )
+            .await
+            .expect("transcribe succeeded");
+
+        println!(
+            "engine_transcribe_end_to_end: model={:?} segments={} chars={} language={:?}",
+            engine.model,
+            result.segments.len(),
+            result.segments.iter().map(|s| s.text.chars().count()).sum::<usize>(),
+            result.language,
+        );
+        for seg in &result.segments {
+            println!(
+                "engine segment {:>2}: [{:>7.2}s -> {:>7.2}s] {}",
+                seg.seq, seg.start, seg.end, seg.text
+            );
+        }
+
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+        let progress: Vec<(f64, f32)> = events
+            .iter()
+            .filter_map(|e| match e {
+                CoreEvent::TranscriptionProgress {
+                    meeting_id: id,
+                    position_secs,
+                    progress,
+                } if *id == meeting_id => Some((*position_secs, *progress)),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !progress.is_empty(),
+            "expected >= 1 progress event, got {}",
+            progress.len()
         );
     }
 }

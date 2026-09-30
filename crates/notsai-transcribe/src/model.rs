@@ -14,6 +14,7 @@ pub fn model_file_name(model: WhisperModel) -> &'static str {
         WhisperModel::Tiny => "ggml-tiny.bin",
         WhisperModel::Base => "ggml-base.bin",
         WhisperModel::Small => "ggml-small.bin",
+        WhisperModel::SmallEn => "ggml-small.en.bin",
         WhisperModel::Medium => "ggml-medium.bin",
         WhisperModel::LargeV3 => "ggml-large-v3.bin",
     }
@@ -33,14 +34,21 @@ pub fn model_size_bytes(model: WhisperModel) -> u64 {
         WhisperModel::Tiny => 78_643_200,
         WhisperModel::Base => 148_897_792,
         WhisperModel::Small => 488_636_416,
+        WhisperModel::SmallEn => 487_614_201,
         WhisperModel::Medium => 1_610_612_736,
         WhisperModel::LargeV3 => 3_328_599_654,
     }
 }
 
-/// The languages supported by every model.
-pub fn model_languages(_model: WhisperModel) -> &'static [SttLanguage] {
-    &[SttLanguage::En, SttLanguage::Hi, SttLanguage::Mr]
+/// The languages supported by the given model.
+///
+/// All multilingual models cover English, Hindi and Marathi. The English-only
+/// small model only covers English.
+pub fn model_languages(model: WhisperModel) -> &'static [SttLanguage] {
+    match model {
+        WhisperModel::SmallEn => &[SttLanguage::En],
+        _ => &[SttLanguage::En, SttLanguage::Hi, SttLanguage::Mr],
+    }
 }
 
 /// The whisper.cpp language code for the given language.
@@ -62,6 +70,7 @@ mod tests {
         assert_eq!(model_file_name(WhisperModel::Tiny), "ggml-tiny.bin");
         assert_eq!(model_file_name(WhisperModel::Base), "ggml-base.bin");
         assert_eq!(model_file_name(WhisperModel::Small), "ggml-small.bin");
+        assert_eq!(model_file_name(WhisperModel::SmallEn), "ggml-small.en.bin");
         assert_eq!(model_file_name(WhisperModel::Medium), "ggml-medium.bin");
         assert_eq!(model_file_name(WhisperModel::LargeV3), "ggml-large-v3.bin");
     }
@@ -84,6 +93,10 @@ mod tests {
             expected("ggml-small.bin")
         );
         assert_eq!(
+            model_download_url(WhisperModel::SmallEn),
+            expected("ggml-small.en.bin")
+        );
+        assert_eq!(
             model_download_url(WhisperModel::Medium),
             expected("ggml-medium.bin")
         );
@@ -98,13 +111,16 @@ mod tests {
         let tiny = model_size_bytes(WhisperModel::Tiny);
         let base = model_size_bytes(WhisperModel::Base);
         let small = model_size_bytes(WhisperModel::Small);
+        let small_en = model_size_bytes(WhisperModel::SmallEn);
         let medium = model_size_bytes(WhisperModel::Medium);
         let large = model_size_bytes(WhisperModel::LargeV3);
-        assert!(tiny < base && base < small && small < medium && medium < large);
+        assert!(
+            tiny < base && base < small_en && small_en < small && small < medium && medium < large
+        );
     }
 
     #[test]
-    fn every_model_supports_all_languages() {
+    fn multilingual_models_support_all_languages() {
         for model in [
             WhisperModel::Tiny,
             WhisperModel::Base,
@@ -117,6 +133,11 @@ mod tests {
                 &[SttLanguage::En, SttLanguage::Hi, SttLanguage::Mr]
             );
         }
+    }
+
+    #[test]
+    fn small_en_supports_only_english() {
+        assert_eq!(model_languages(WhisperModel::SmallEn), &[SttLanguage::En]);
     }
 
     #[test]

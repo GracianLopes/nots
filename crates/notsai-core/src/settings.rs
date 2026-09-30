@@ -78,6 +78,10 @@ pub enum WhisperModel {
     Base,
     #[default]
     Small,
+    /// English-only variant of the small model. Only downloaded and used
+    /// when the user explicitly selects English; auto language stays
+    /// multilingual.
+    SmallEn,
     Medium,
     LargeV3,
 }
