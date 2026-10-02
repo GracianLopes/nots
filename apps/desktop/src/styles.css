@@ -276,6 +276,21 @@ button.danger {
   color: #f87171;
 }
 
+/* Recording continues, but part of the audio is missing, so this reads as a
+   caution rather than an error. */
+.card--warning {
+  border-color: #fbbf24;
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.card--warning h2 {
+  color: #fbbf24;
+}
+
+.card--warning p {
+  color: #fcd34d;
+}
+
 .settings-toggle {
   display: flex;
   align-items: center;

@@ -141,6 +141,12 @@ export interface AppSettings {
 export type RecordingState =
   | { state: "starting" }
   | { state: "recording"; started_at: string }
+  /**
+   * The microphone is recording, but system audio could not be captured, so
+   * this recording is microphone-only. Not a failure: `reason` is shown as a
+   * non-blocking warning.
+   */
+  | { state: "system_audio_degraded"; reason: string }
   | { state: "stopped"; duration_secs: number }
   | { state: "failed"; error: string };
 

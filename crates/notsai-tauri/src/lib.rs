@@ -17,7 +17,7 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use notsai_ai::{provider_from_config, Summarizer};
-use notsai_audio::{ffmpeg, wav, AudioError, MicRecorder};
+use notsai_audio::{ffmpeg, wav, AudioError, MixedRecorder, MixedStart};
 use notsai_core::{
     AppSettings, AudioSource, CoreError, CoreEvent, EventBus, Meeting, MeetingRepository,
     MeetingStatus, Note, NoteRepository, ProcessingState, RecordingState, SearchHit,
@@ -40,7 +40,7 @@ pub struct AppState {
     settings_repo: FileSettingsRepository,
     event_bus: EventBus,
     /// The single active recording (meeting id plus recorder), if any.
-    recorder: Mutex<Option<(Uuid, MicRecorder)>>,
+    recorder: Mutex<Option<(Uuid, MixedRecorder)>>,
 }
 
 /// Payload returned by the `ping` command, used by the frontend to confirm the
@@ -257,8 +257,21 @@ async fn record_meeting(id: Uuid, state: State<'_, AppState>) -> Result<Meeting,
         state: RecordingState::Starting,
     });
 
-    let recorder = match MicRecorder::start() {
-        Ok(recorder) => recorder,
+    // Opening both capture streams blocks briefly: the system backend waits out
+    // a short grace period to confirm `parec` really started instead of exiting
+    // on a bad device. Keep that off the async runtime so other commands and
+    // event publishing stay responsive during startup.
+    let MixedStart {
+        recorder,
+        system_audio,
+    } = match tokio::task::spawn_blocking(MixedRecorder::start)
+        .await
+        .map_err(|error| {
+            CommandError::from(CoreError::internal(format!(
+                "recorder task failed: {error}"
+            )))
+        })? {
+        Ok(started) => started,
         Err(err) => {
             mark_recording_failed(&state, &mut meeting, &err.to_string()).await;
             return Err(CommandError::from(err));
@@ -271,6 +284,14 @@ async fn record_meeting(id: Uuid, state: State<'_, AppState>) -> Result<Meeting,
             started_at: Utc::now(),
         },
     });
+    // System audio is best-effort: the microphone is already recording, so
+    // report the missing stream as a warning rather than failing the meeting.
+    if let Err(reason) = system_audio {
+        state.event_bus.publish(CoreEvent::Recording {
+            meeting_id: id,
+            state: RecordingState::SystemAudioDegraded { reason },
+        });
+    }
 
     Ok(meeting)
 }

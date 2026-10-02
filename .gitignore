@@ -41,4 +41,5 @@ Thumbs.db
 
 # Logs
 *.log
-logs/
+logs/context.md
+context.md

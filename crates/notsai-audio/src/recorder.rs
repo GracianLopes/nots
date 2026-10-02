@@ -16,8 +16,9 @@ use std::vec::Vec;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use tracing::error;
 
-use crate::dsp;
+use crate::dsp::{self, Mixer, MIX_SAMPLE_RATE};
 use crate::error::AudioError;
+use crate::system::SystemAudioSource;
 
 /// Raw interleaved microphone samples at the device's native rate.
 #[derive(Debug)]
@@ -160,18 +161,17 @@ fn join_capture(
     }
 }
 
-fn capture_loop(
-    cfg: CaptureConfig,
-    sender: Sender<Vec<f32>>,
-    receiver: Receiver<Vec<f32>>,
-    stop: Arc<AtomicBool>,
-) -> Result<CapturedPcm, String> {
+/// Build and start the microphone input stream, pushing `f32` blocks to `sender`.
+///
+/// Shared by [`MicRecorder`] and [`MixedRecorder`]: the two differ only in what
+/// they do with a callback's block, not in how the stream is created.
+fn play_input(cfg: &CaptureConfig, sender: &Sender<Vec<f32>>) -> Result<cpal::Stream, String> {
     let error_fn = |error| error!(?error, "capture stream error");
 
     let stream = match cfg.sample_format {
-        cpal::SampleFormat::F32 => build_input::<f32>(&cfg.device, &cfg.config, &sender, error_fn),
-        cpal::SampleFormat::I16 => build_input::<i16>(&cfg.device, &cfg.config, &sender, error_fn),
-        cpal::SampleFormat::U16 => build_input::<u16>(&cfg.device, &cfg.config, &sender, error_fn),
+        cpal::SampleFormat::F32 => build_input::<f32>(&cfg.device, &cfg.config, sender, error_fn),
+        cpal::SampleFormat::I16 => build_input::<i16>(&cfg.device, &cfg.config, sender, error_fn),
+        cpal::SampleFormat::U16 => build_input::<u16>(&cfg.device, &cfg.config, sender, error_fn),
         other => return Err(format!("unsupported sample format: {other:?}")),
     }
     .map_err(|error| error.to_string())?;
@@ -179,6 +179,18 @@ fn capture_loop(
     stream
         .play()
         .map_err(|error| format!("failed to start capture: {error}"))?;
+
+    Ok(stream)
+}
+
+fn capture_loop(
+    cfg: CaptureConfig,
+    sender: Sender<Vec<f32>>,
+    receiver: Receiver<Vec<f32>>,
+    stop: Arc<AtomicBool>,
+) -> Result<CapturedPcm, String> {
+    // Hold the stream for the life of the recording.
+    let stream = play_input(&cfg, &sender)?;
 
     let mut samples: Vec<f32> = Vec::new();
     while !stop.load(Ordering::Relaxed) {
@@ -225,4 +237,169 @@ fn drain_chunks(receiver: &Receiver<Vec<f32>>, samples: &mut Vec<f32>) {
     while let Ok(chunk) = receiver.try_recv() {
         samples.extend_from_slice(&chunk);
     }
+}
+
+/// What [`MixedRecorder::start`] hands back: the recorder plus the reason
+/// system audio is missing, if it is.
+pub struct MixedStart {
+    /// The running recorder. Stop it to obtain the mixed audio.
+    pub recorder: MixedRecorder,
+    /// `Ok(())` when system audio is flowing, otherwise why it is not. Never
+    /// fatal: the recorder captures microphone audio either way.
+    pub system_audio: Result<(), String>,
+}
+
+/// A live recording that mixes microphone audio with system loopback audio.
+///
+/// The microphone defines the timeline, since it is the one source we can
+/// always count on. A dedicated mixer thread owns both capture streams, pulls
+/// chunks as they arrive, and appends the sum to the running buffer. A silent
+/// or unavailable system source therefore contributes zeros rather than
+/// stalling or desynchronising the recording.
+pub struct MixedRecorder {
+    handle: Option<JoinHandle<Result<CapturedPcm, String>>>,
+    stop: Arc<AtomicBool>,
+}
+
+impl MixedRecorder {
+    /// Start recording, attempting system capture on the way.
+    ///
+    /// Fails only when the microphone is unavailable or its stream cannot be
+    /// built. When system capture cannot start, the returned
+    /// [`MixedStart::system_audio`] explains why and the recording proceeds
+    /// with microphone audio alone.
+    pub fn start() -> Result<MixedStart, AudioError> {
+        let host = cpal::default_host();
+        let device = host
+            .default_input_device()
+            .ok_or(AudioError::NoInputDevice)?;
+        let input_config = device
+            .default_input_config()
+            .map_err(|error| AudioError::Device(error.to_string()))?;
+
+        let sample_format = input_config.sample_format();
+        let channels = input_config.channels();
+        let sample_rate = input_config.sample_rate().0;
+
+        let system = SystemAudioSource::start();
+        let system_audio = match &system {
+            Ok(_) => Ok(()),
+            Err(reason) => Err(reason.clone()),
+        };
+
+        let (sender, receiver): (Sender<Vec<f32>>, Receiver<Vec<f32>>) = channel();
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let handle = thread::Builder::new()
+            .name("notsai-mix".into())
+            .spawn({
+                let stop = Arc::clone(&stop);
+                move || {
+                    mix_loop(
+                        CaptureConfig {
+                            device,
+                            config: input_config.into(),
+                            sample_format,
+                            channels,
+                            sample_rate,
+                        },
+                        sender,
+                        receiver,
+                        system.ok(),
+                        stop,
+                    )
+                }
+            })
+            .map_err(AudioError::Io)?;
+
+        Ok(MixedStart {
+            recorder: MixedRecorder {
+                handle: Some(handle),
+                stop,
+            },
+            system_audio,
+        })
+    }
+
+    /// Stop recording and return the mixed mono audio at
+    /// [`dsp::MIX_SAMPLE_RATE`].
+    pub fn stop(mut self) -> Result<CapturedPcm, AudioError> {
+        self.stop.store(true, Ordering::Relaxed);
+        match self.handle.take() {
+            Some(handle) => join_capture(handle),
+            None => Err(AudioError::Capture("recorder was already stopped".into())),
+        }
+    }
+
+    /// Stop recording on the blocking thread pool and await the audio.
+    pub async fn stop_async(self) -> Result<CapturedPcm, AudioError> {
+        tokio::task::spawn_blocking(move || self.stop())
+            .await
+            .map_err(|error| AudioError::Capture(format!("stop worker failed: {error}")))?
+    }
+}
+
+impl Drop for MixedRecorder {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn mix_loop(
+    cfg: CaptureConfig,
+    sender: Sender<Vec<f32>>,
+    receiver: Receiver<Vec<f32>>,
+    mut system: Option<SystemAudioSource>,
+    stop: Arc<AtomicBool>,
+) -> Result<CapturedPcm, String> {
+    // Hold the stream on this thread for the life of the recording.
+    let stream = play_input(&cfg, &sender)?;
+
+    let system_rate = system
+        .as_ref()
+        .map(|source| source.sample_rate())
+        .unwrap_or(MIX_SAMPLE_RATE);
+    let mut mixer = Mixer::new(MIX_SAMPLE_RATE, cfg.sample_rate, system_rate);
+    let mut samples: Vec<f32> = Vec::new();
+
+    while !stop.load(Ordering::Relaxed) {
+        if let Some(source) = system.as_mut() {
+            let system_samples = source.drain();
+            if !system_samples.is_empty() {
+                mixer.push_system(&system_samples);
+            }
+        }
+
+        // The microphone is the clock: only queued mic frames advance time.
+        while let Ok(chunk) = receiver.try_recv() {
+            let mono = dsp::interleaved_to_mono(&chunk, cfg.channels);
+            samples.extend(mixer.push_mic(&mono));
+        }
+
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    // Shut the system backend down first, then push everything it delivered so
+    // the trailing system frames are handed to the mixer while the microphone
+    // still has a tail to clock them against. Any system audio that outran the
+    // microphone tail is left unclocked and dropped by ignoring the tail output
+    // of `push_system`, which matches the rule that only the microphone
+    // advances time.
+    if let Some(source) = system.take() {
+        mixer.push_system(&source.stop());
+    }
+    while let Ok(chunk) = receiver.try_recv() {
+        let mono = dsp::interleaved_to_mono(&chunk, cfg.channels);
+        samples.extend(mixer.push_mic(&mono));
+    }
+    let _ = stream.pause();
+
+    Ok(CapturedPcm {
+        sample_rate: MIX_SAMPLE_RATE,
+        channels: 1,
+        samples,
+    })
 }

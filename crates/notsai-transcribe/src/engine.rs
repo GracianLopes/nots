@@ -1180,13 +1180,7 @@ mod tests {
         let bus = EventBus::new(256);
         let mut rx = bus.subscribe();
         let result = engine
-            .transcribe(
-                meeting_id,
-                AudioSource::File {
-                    path: audio_path,
-                },
-                &bus,
-            )
+            .transcribe(meeting_id, AudioSource::File { path: audio_path }, &bus)
             .await
             .expect("transcribe succeeded");
 
@@ -1194,7 +1188,11 @@ mod tests {
             "engine_transcribe_end_to_end: model={:?} segments={} chars={} language={:?}",
             engine.model,
             result.segments.len(),
-            result.segments.iter().map(|s| s.text.chars().count()).sum::<usize>(),
+            result
+                .segments
+                .iter()
+                .map(|s| s.text.chars().count())
+                .sum::<usize>(),
             result.language,
         );
         for seg in &result.segments {

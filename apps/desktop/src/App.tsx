@@ -95,6 +95,7 @@ export default function App() {
   const [activeRecordingId, setActiveRecordingId] = useState<string | null>(
     null,
   );
+  const [captureWarning, setCaptureWarning] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [audioUrls, setAudioUrls] = useState<Record<string, string>>({});
   const [newMeetingTitle, setNewMeetingTitle] = useState("");
@@ -151,6 +152,13 @@ export default function App() {
       setLiveTranscript((prev) => [...prev, event.segment.text]);
     });
     const unlistenRecording = onRecordingState((event) => {
+      // A degraded capture is still a live recording, so it must not clear
+      // the active meeting; it only surfaces a warning alongside it.
+      if (event.state.state === "system_audio_degraded") {
+        setCaptureWarning(event.state.reason);
+        return;
+      }
+      setCaptureWarning(null);
       setActiveRecordingId(
         event.state.state === "recording" ? event.meeting_id : null,
       );
@@ -418,6 +426,15 @@ export default function App() {
         <section className="card card--error" role="alert">
           <h2>Error</h2>
           <p>{errorMsg}</p>
+        </section>
+      )}
+
+      {captureWarning !== null && (
+        <section className="card card--warning" role="status">
+          <h2>System audio unavailable</h2>
+          <p>
+            Recording is microphone-only for now. {captureWarning}
+          </p>
         </section>
       )}
 

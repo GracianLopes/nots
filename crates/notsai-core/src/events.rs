@@ -12,9 +12,24 @@ use crate::model::TranscriptSegment;
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum RecordingState {
     Starting,
-    Recording { started_at: DateTime<Utc> },
-    Stopped { duration_secs: u64 },
-    Failed { error: String },
+    Recording {
+        started_at: DateTime<Utc>,
+    },
+    /// The microphone is recording, but system (loopback) audio could not be
+    /// captured, so the capture is microphone-only.
+    ///
+    /// This is not a failure: the meeting is still being recorded. The UI shows
+    /// `reason` as a non-blocking warning so the user knows the recording misses
+    /// other participants' audio.
+    SystemAudioDegraded {
+        reason: String,
+    },
+    Stopped {
+        duration_secs: u64,
+    },
+    Failed {
+        error: String,
+    },
 }
 
 /// State of background processing (model download, transcription /
@@ -197,5 +212,18 @@ mod tests {
         let value = serde_json::to_value(&state).unwrap();
         assert_eq!(value["state"], "recording");
         assert!(value["started_at"].is_string());
+    }
+
+    #[test]
+    fn recording_state_degraded_round_trips_reason() {
+        let state = RecordingState::SystemAudioDegraded {
+            reason: "PulseAudio monitor unavailable".into(),
+        };
+        let value = serde_json::to_value(&state).unwrap();
+        assert_eq!(value["state"], "system_audio_degraded");
+        assert_eq!(value["reason"], "PulseAudio monitor unavailable");
+
+        let decoded: RecordingState = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded, state);
     }
 }

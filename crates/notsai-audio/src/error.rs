@@ -25,6 +25,13 @@ pub enum AudioError {
     #[error("capture worker ended unexpectedly: {0}")]
     Capture(String),
 
+    /// System (loopback) audio could not be captured.
+    ///
+    /// This is never fatal: the recorder keeps running with microphone audio
+    /// only and the caller is expected to surface it as a warning.
+    #[error("system audio unavailable: {0}")]
+    SystemAudio(String),
+
     /// `ffmpeg` is required but was not found on the system.
     #[error("ffmpeg not found on PATH (set NOTSAI_FFMPEG to its location)")]
     FfmpegNotFound,
